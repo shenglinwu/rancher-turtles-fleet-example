@@ -1,178 +1,171 @@
 apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
-kind: DockerCluster
+kind: MaasCluster
 metadata:
-  name: cluster1
+  name: gpu-cluster
   namespace: default
-  annotations:
-    "helm.sh/resource-policy": keep
 spec:
-  loadBalancer:
-    customHAProxyConfigTemplateRef:
-      name: cluster1-lb-config
+  dnsDomain: maas
 ---
 apiVersion: cluster.x-k8s.io/v1beta1
 kind: Cluster
 metadata:
-  name: cluster1
+  name: gpu-cluster
   namespace: default
 spec:
   clusterNetwork:
     pods:
       cidrBlocks:
-      - 10.1.0.0/16
+      - 192.168.0.0/16
     serviceDomain: cluster.local
     services:
       cidrBlocks:
-      - 10.10.0.0/16
+      - 10.96.0.0/12
   controlPlaneRef:
     apiVersion: controlplane.cluster.x-k8s.io/v1beta1
-    kind: RKE2ControlPlane
-    name: cluster1-control-plane
+    kind: KubeadmControlPlane
+    name: gpu-cluster-control-plane
   infrastructureRef:
     apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
-    kind: DockerCluster
-    name: cluster1
+    kind: MaasCluster
+    name: gpu-cluster
 ---
 apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
-kind: DockerMachineTemplate
+kind: MaasMachineTemplate
 metadata:
-  name: cluster1-control-plane
+  name: gpu-cluster-control-plane
   namespace: default
 spec:
   template:
     spec:
-      customImage: kindest/node:v1.26.0
-      bootstrapTimeout: 15m
+      image: custom/ubuntu-2204-k8s-1.26.1
+      minCPU: 4
+      minMemory: 8192
+      resourcePool: default
+      tags:
+      - dell
 ---
 apiVersion: controlplane.cluster.x-k8s.io/v1beta1
-kind: RKE2ControlPlane
+kind: KubeadmControlPlane
 metadata:
-  name: cluster1-control-plane
+  name: gpu-cluster-control-plane
   namespace: default
-  annotations:
-    "helm.sh/resource-policy": keep
-spec: 
+spec:
+  kubeadmConfigSpec:
+    clusterConfiguration:
+      apiServer:
+        extraArgs:
+          anonymous-auth: "true"
+          authorization-mode: RBAC,Node
+          default-not-ready-toleration-seconds: "60"
+          default-unreachable-toleration-seconds: "60"
+          disable-admission-plugins: AlwaysAdmit
+          enable-admission-plugins: AlwaysPullImages,NamespaceLifecycle,ServiceAccount,NodeRestriction
+        timeoutForControlPlane: 10m0s
+      controllerManager:
+        extraArgs:
+          feature-gates: RotateKubeletServerCertificate=true
+          pod-eviction-timeout: 1m0s
+          terminated-pod-gc-threshold: "25"
+          use-service-account-credentials: "true"
+      dns: {}
+      etcd: {}
+      networking: {}
+      scheduler:
+        extraArgs: null
+    initConfiguration:
+      localAPIEndpoint:
+        advertiseAddress: ""
+        bindPort: 0
+      nodeRegistration:
+        kubeletExtraArgs:
+          event-qps: "0"
+          feature-gates: RotateKubeletServerCertificate=true
+          read-only-port: "0"
+        name: '{{ v1.local_hostname }}'
+    joinConfiguration:
+      controlPlane:
+        localAPIEndpoint:
+          advertiseAddress: ""
+          bindPort: 0
+      discovery: {}
+      nodeRegistration:
+        kubeletExtraArgs:
+          event-qps: "0"
+          feature-gates: RotateKubeletServerCertificate=true
+          read-only-port: "0"
+        name: '{{ v1.local_hostname }}'
+    preKubeadmCommands:
+    - while [ ! -S /var/run/containerd/containerd.sock ]; do echo 'Waiting for containerd...';
+      sleep 1; done
+    - sed -ri '/\sswap\s/s/^#?/#/' /etc/fstab
+    - swapoff -a
+    useExperimentalRetryJoin: true
+  machineTemplate:
+    infrastructureRef:
+      apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+      kind: MaasMachineTemplate
+      name: gpu-cluster-control-plane
   replicas: 1
-  registrationMethod: internal-first
-  rolloutStrategy:
-    rollingUpdate:
-      maxSurge: 1
-    type: RollingUpdate
-  serverConfig:
-    disableComponents:
-      kubernetesComponents:
-      - cloudController
-  infrastructureRef:
-    apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
-    kind: DockerMachineTemplate
-    name:  cluster1-control-plane
-  nodeDrainTimeout: 30s
-  version: v1.26.4+rke2r1
+  version: v1.26.1
 ---
 apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
-kind: DockerMachineTemplate
+kind: MaasMachineTemplate
 metadata:
-  name: cluster1-md-0
+  name: gpu-cluster-md-0
   namespace: default
 spec:
   template:
     spec:
-      customImage: kindest/node:v1.26.0
-      bootstrapTimeout: 15m
----
-apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
-kind: RKE2ConfigTemplate
-metadata:
-  name: cluster1-md-0
-  namespace: default
+      image: custom/ubuntu-2204-k8s-1.26.1
+      minCPU: 4
+      minMemory: 8192
+      resourcePool: default
+      tags:
+      - dell
 ---
 apiVersion: cluster.x-k8s.io/v1beta1
 kind: MachineDeployment
 metadata:
-  name: cluster1-md-0
+  name: gpu-cluster-md-0
   namespace: default
-  annotations:
-    "helm.sh/resource-policy": keep
 spec:
-  clusterName: cluster1
+  clusterName: gpu-cluster
   replicas: 1
   selector:
-    matchLabels: null
+    matchLabels:
+      cluster.x-k8s.io/cluster-name: gpu-cluster
   template:
     spec:
       bootstrap:
         configRef:
           apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
-          kind: RKE2ConfigTemplate
-          name: cluster1-md-0
-      clusterName: cluster1
+          kind: KubeadmConfigTemplate
+          name: gpu-cluster-md-0
+      clusterName: gpu-cluster
       infrastructureRef:
         apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
-        kind: DockerMachineTemplate
-        name: cluster1-md-0
-      version: v1.26.4+rke2r1
+        kind: MaasMachineTemplate
+        name: gpu-cluster-md-0
+      version: v1.26.1
 ---
-apiVersion: v1
-data:
-  value: |-
-    # generated by kind
-    global
-      log /dev/log local0
-      log /dev/log local1 notice
-      daemon
-      # limit memory usage to approximately 18 MB
-      # (see https://github.com/kubernetes-sigs/kind/pull/3115)
-      maxconn 100000
-
-    resolvers docker
-      nameserver dns 127.0.0.11:53
-
-    defaults
-      log global
-      mode tcp
-      option dontlognull
-      # TODO: tune these
-      timeout connect 5000
-      timeout client 50000
-      timeout server 50000
-      # allow to boot despite dns don't resolve backends
-      default-server init-addr none
-
-    frontend stats
-      bind *:8404
-      stats enable
-      stats uri /
-      stats refresh 10s
-
-    frontend control-plane
-      bind *:{{ .FrontendControlPlanePort }}
-      {{ if .IPv6 -}}
-      bind :::{{ .FrontendControlPlanePort }};
-      {{- end }}
-      default_backend kube-apiservers
-
-    backend kube-apiservers
-      option httpchk GET /healthz
-      http-check expect status 401
-      # TODO: we should be verifying (!)
-      {{range $server, $address := .BackendServers}}
-      server {{ $server }} {{ JoinHostPort $address $.BackendControlPlanePort }} check check-ssl verify none resolvers docker resolve-prefer {{ if $.IPv6 -}} ipv6 {{- else -}} ipv4 {{- end }}
-      {{- end}}
-
-    frontend rke2-join
-      bind *:9345
-      {{ if .IPv6 -}}
-      bind :::9345;
-      {{- end }}
-      default_backend rke2-servers
-
-    backend rke2-servers
-      option httpchk GET /v1-rke2/readyz
-      http-check expect status 403
-      {{range $server, $address := .BackendServers}}
-      server {{ $server }} {{ $address }}:9345 check check-ssl verify none
-      {{- end}}
-kind: ConfigMap
+apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+kind: KubeadmConfigTemplate
 metadata:
-  name: cluster1-lb-config
+  name: gpu-cluster-md-0
   namespace: default
+spec:
+  template:
+    spec:
+      joinConfiguration:
+        nodeRegistration:
+          kubeletExtraArgs:
+            event-qps: "0"
+            feature-gates: RotateKubeletServerCertificate=true
+            read-only-port: "0"
+          name: '{{ v1.local_hostname }}'
+      preKubeadmCommands:
+      - while [ ! -S /var/run/containerd/containerd.sock ]; do echo 'Waiting for containerd...';
+        sleep 1; done
+      - sed -ri '/\sswap\s/s/^#?/#/' /etc/fstab
+      - swapoff -a
+      useExperimentalRetryJoin: true
